@@ -4,6 +4,13 @@ import pytest
 from portfolio_lab import data
 
 
+@pytest.fixture(autouse=True)
+def prices_path(monkeypatch, tmp_path):
+    path = tmp_path / "raw" / "prices.parquet"
+    monkeypatch.setattr(data, "PRICES_PATH", path)
+    return path
+
+
 @pytest.fixture
 def prices():
     idx = pd.to_datetime(["2024-01-15", "2024-01-31", "2024-02-15", "2024-02-29", "2024-03-29"])
@@ -24,7 +31,7 @@ def test_download_prices_calls_yfinance(monkeypatch, prices):
 
     assert result is prices
     assert calls["tickers"] == ["AAA"]
-    assert calls["kwargs"] == {"group_by": "ticker"}
+    assert calls["kwargs"] == {"period": "max", "group_by": "ticker"}
 
 
 def test_load_prices_reads_local_file(monkeypatch, prices):
@@ -38,7 +45,7 @@ def test_load_prices_reads_local_file(monkeypatch, prices):
     assert data.load_prices(["AAA"]) is prices
 
 
-def test_load_prices_downloads_and_saves_when_missing(monkeypatch, prices):
+def test_load_prices_downloads_and_saves_when_missing(monkeypatch, prices, prices_path):
     def missing(path):
         raise FileNotFoundError
 
@@ -50,10 +57,11 @@ def test_load_prices_downloads_and_saves_when_missing(monkeypatch, prices):
     result = data.load_prices(["AAA"])
 
     assert result is prices
-    assert saved == ["data/raw/prices.parquet"]
+    assert saved == [prices_path]
+    assert prices_path.parent.is_dir()
 
 
-def test_load_prices_refresh_skips_local_file(monkeypatch, prices):
+def test_load_prices_refresh_skips_local_file(monkeypatch, prices, prices_path):
     def fail_read(path):
         raise AssertionError("should not read when refreshing")
 
@@ -65,7 +73,20 @@ def test_load_prices_refresh_skips_local_file(monkeypatch, prices):
     result = data.load_prices(["AAA"], refresh=True)
 
     assert result is prices
-    assert saved == ["data/raw/prices.parquet"]
+    assert saved == [prices_path]
+
+
+def test_load_prices_redownloads_when_ticker_missing_from_cache(monkeypatch, prices, prices_path):
+    both = prices.assign(BBB=1.0)
+    saved = []
+    monkeypatch.setattr(data.pd, "read_parquet", lambda path: prices)
+    monkeypatch.setattr(data, "download_prices", lambda tickers: both)
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", lambda self, path: saved.append(path))
+
+    result = data.load_prices(["AAA", "BBB"])
+
+    assert result is both
+    assert saved == [prices_path]
 
 
 def test_to_monthly_returns_values(prices):
