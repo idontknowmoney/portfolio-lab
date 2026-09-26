@@ -65,6 +65,7 @@ def run_simulation(cfg: Config, returns: pd.DataFrame) -> np.ndarray:
         monthly_returns=returns[[a.ticker for a in assets]].to_numpy(),
         n_months=sim.horizon_years * 12,
         n_paths=sim.n_paths,
+        block_size=sim.block_size,
         rebalance=sim.rebalance,
         seed=sim.seed,
     )
