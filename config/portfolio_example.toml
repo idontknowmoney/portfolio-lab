@@ -30,5 +30,6 @@ cost_basis = 0
 monthly_contribution = 200
 horizon_years = 30
 n_paths = 10000
+block_size = 12
 seed = 42
 rebalance = "none"

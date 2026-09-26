@@ -45,6 +45,7 @@ class SimulationConfig(_Model):
     monthly_contribution: float = Field(ge=0)
     horizon_years: int = Field(gt=0)
     n_paths: int = Field(gt=0)
+    block_size: int = Field(gt=0)
     seed: int
     rebalance: str
 
