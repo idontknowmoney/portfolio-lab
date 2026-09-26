@@ -1,0 +1,31 @@
+[project]
+name = "portfolio-lab"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "alexrr04" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+portfolio-lab = "portfolio_lab:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.3.0",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
