@@ -23,6 +23,7 @@ monthly_contribution = 100
 horizon_years = 5
 n_paths = 10
 seed = 1
+block_size = 3
 rebalance = "none"
 """
 

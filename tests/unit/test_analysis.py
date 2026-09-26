@@ -29,6 +29,7 @@ def cfg():
                 "horizon_years": 1,
                 "n_paths": 4,
                 "seed": 0,
+                "block_size": 3,
                 "rebalance": "none",
             },
         }
