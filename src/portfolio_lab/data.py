@@ -1,9 +1,13 @@
+from pathlib import Path
+
 import pandas as pd
 import yfinance as yf
 
 from portfolio_lab.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+PRICES_PATH = Path(__file__).resolve().parents[2] / "data" / "raw" / "prices.parquet"
 
 
 def download_prices(tickers: list[str]) -> pd.DataFrame:
@@ -16,7 +20,7 @@ def download_prices(tickers: list[str]) -> pd.DataFrame:
     Returns:
     pd.DataFrame: A DataFrame containing the historical stock prices.
     """
-    data = yf.download(tickers, group_by="ticker")
+    data = yf.download(tickers, period="max", group_by="ticker")
     return data
 
 
@@ -32,15 +36,25 @@ def load_prices(tickers: list[str], refresh: bool = False) -> pd.DataFrame:
     Returns:
     pd.DataFrame: A DataFrame containing the historical stock prices.
     """
-    try:
-        if refresh:
-            raise FileNotFoundError
-        data = pd.read_parquet("data/raw/prices.parquet")
-        logger.info("Loaded prices from local file.")
-    except FileNotFoundError:
+    data = None
+    if not refresh:
+        try:
+            data = pd.read_parquet(PRICES_PATH)
+        except FileNotFoundError:
+            pass
+        else:
+            missing = set(tickers) - set(data.columns.get_level_values(0))
+            if missing:
+                logger.info("Local prices lack %s, re-downloading.", sorted(missing))
+                data = None
+            else:
+                logger.info("Loaded prices from local file.")
+
+    if data is None:
         logger.info("Downloading prices...")
         data = download_prices(tickers)
-        data.to_parquet("data/raw/prices.parquet")
+        PRICES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data.to_parquet(PRICES_PATH)
         logger.info("Prices downloaded and saved to local file.")
     return data
 
