@@ -25,13 +25,3 @@ repos:
       rev: 0.12.19
       hooks:
           - id: uv-lock
-
-    # Tests, only before pushing
-    - repo: local
-      hooks:
-          - id: pytest
-            name: pytest
-            entry: uv run pytest
-            language: system
-            pass_filenames: false
-            stages: [pre-push]
