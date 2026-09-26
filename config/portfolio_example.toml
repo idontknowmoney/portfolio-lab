@@ -1,0 +1,31 @@
+[portfolio]
+name = "Global indexed"
+currency = "EUR"
+
+[[portfolio.assets]]
+name = "MSCI World"
+isin = "IE00B4L5Y983"
+ticker = "EUNL.DE"
+contribution_weight = 0.70
+initial_value = 0
+
+[[portfolio.assets]]
+name = "Emerging Markets IMI"
+isin = "IE00BKM4GZ66"
+ticker = "IS3N.DE"
+contribution_weight = 0.20
+initial_value = 0
+
+[[portfolio.assets]]
+name = "MSCI Europe"
+isin = "IE00B4K48X80"
+ticker = "EUNK.DE"
+contribution_weight = 0.10
+initial_value = 0
+
+[simulation]
+monthly_contribution = 200
+horizon_years = 30
+n_paths = 10_000
+seed = 42
+rebalance = "none"

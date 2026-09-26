@@ -7,7 +7,10 @@ authors = [
     { name = "alexrr04" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pandas>=3.0.6",
+    "yfinance>=1.7.0",
+]
 
 [project.scripts]
 portfolio-lab = "portfolio_lab:main"
@@ -29,3 +32,6 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.9",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
