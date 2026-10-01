@@ -11,7 +11,7 @@ from portfolio_lab.config import Config
 from portfolio_lab.data import to_monthly_returns
 from portfolio_lab.simulate import simulate
 
-QUANTILES = (5, 25, 50, 75, 95)
+QUANTILES = (5, 10, 25, 50, 75, 95)
 FIGURES_DIR = Path(__file__).resolve().parents[2] / "figures"
 
 
@@ -159,24 +159,21 @@ def gain_by_asset(paths: np.ndarray, cost: np.ndarray, names: list[str]) -> pd.D
     names (list[str]): Asset names.
 
     Returns:
-    pd.DataFrame: One row per asset with the final amount invested, P5/P50/P95 gain and the
-    median return (NaN where nothing was invested).
+    pd.DataFrame: One row per asset with the final amount invested, the gain at each QUANTILES
+    percentile and the median return (NaN where nothing was invested).
     """
     invested = cost[-1]
     gain = paths[:, -1, :] - invested
-    p5, p50, p95 = np.percentile(gain, [5, 50, 95], axis=0)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        median_return = np.where(invested > 0, p50 / invested, np.nan)
-    return pd.DataFrame(
-        {
-            "Invested": invested,
-            "P5 gain": p5,
-            "P50 gain": p50,
-            "P95 gain": p95,
-            "P50 return": median_return,
-        },
+    gains = pd.DataFrame(
+        np.percentile(gain, QUANTILES, axis=0).T,
         index=names,
+        columns=[f"P{q} gain" for q in QUANTILES],
     )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        median_return = np.where(invested > 0, gains["P50 gain"] / invested, np.nan)
+
+    df = pd.DataFrame({"Invested": invested, "P50 return": median_return}, index=names)
+    return df.join(gains)
 
 
 def percentiles_over_time(total: np.ndarray) -> pd.DataFrame:
