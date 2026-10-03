@@ -111,3 +111,53 @@ def test_to_monthly_returns_single_month_is_empty():
     df = pd.DataFrame({"AAA": [1.0, 2.0]}, index=idx)
 
     assert data.to_monthly_returns(df).empty
+
+
+def _month_ends(n, start="2020-01-31"):
+    return pd.date_range(start, periods=n, freq="ME")
+
+
+def test_to_eur_weaker_dollar_lowers_return():
+    idx = _month_ends(2)
+    usd = pd.Series([0.0, 0.0], index=idx)
+    fx = pd.Series([0.10, 0.0], index=idx)
+    assert data.to_eur(usd, fx).tolist() == pytest.approx([1 / 1.1 - 1, 0.0])
+
+
+def test_to_eur_missing_fx_is_nan():
+    idx = _month_ends(2)
+    out = data.to_eur(pd.Series([0.01, 0.02], index=idx), pd.Series([0.0], index=idx[:1]))
+    assert out.iloc[0] == pytest.approx(0.01)
+    assert pd.isna(out.iloc[1])
+
+
+def test_blend_applies_weights_and_drops_incomplete_months():
+    idx = _month_ends(3)
+    df = pd.DataFrame({"A": [0.10, 0.20, None], "B": [0.0, 0.10, 0.50]}, index=idx)
+    out = data.blend(df, [0.7, 0.3])
+    assert list(out.index) == list(idx[:2])
+    assert out.tolist() == pytest.approx([0.07, 0.17])
+
+
+def test_splice_has_no_overlap_and_keeps_primary():
+    idx = _month_ends(6)
+    primary = pd.Series([None, None, None, 0.1, 0.2, 0.3], index=idx)
+    proxy = pd.Series([0.01, 0.02, 0.03, 0.9, 0.9, 0.9], index=idx)
+    out = data.splice(primary, proxy)
+    assert out.index.is_unique and list(out.index) == list(idx)
+    assert out.tolist() == pytest.approx([0.01, 0.02, 0.03, 0.1, 0.2, 0.3])
+
+
+def test_splice_empty_proxy_returns_primary():
+    idx = _month_ends(3)
+    primary = pd.Series([0.1, 0.2, 0.3], index=idx)
+    out = data.splice(primary, pd.Series(dtype=float))
+    assert out.tolist() == primary.tolist()
+
+
+def test_series_monthly_returns_keeps_each_series_own_months():
+    idx = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-29"])
+    closes = pd.DataFrame({"A": [100.0, 110.0, 121.0], "B": [None, 50.0, 55.0]}, index=idx)
+    out = data.series_monthly_returns(closes)
+    assert out["A"].dropna().tolist() == pytest.approx([0.10, 0.10])
+    assert out["B"].dropna().tolist() == pytest.approx([0.10])
