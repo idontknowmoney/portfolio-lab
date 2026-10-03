@@ -223,3 +223,23 @@ def test_sensitivity_to_haircut_lowers_median(cfg):
     out = analysis.sensitivity_to_haircut(cfg, r, haircuts=(0.0, 0.1))
     assert list(out.index) == ["Baseline", "-10%/yr"]
     assert out.loc["-10%/yr", "P50"] < out.loc["Baseline", "P50"]
+
+
+def test_horizon_slice_contains_worst_block_and_has_horizon_length():
+    idx = pd.date_range("2000-01-31", periods=100, freq="ME")
+    r = pd.Series(0.01, index=idx)
+    r.iloc[10:22] = -0.05
+    out = analysis.horizon_slice(r, 40, window=12)
+    assert len(out) == 40
+    assert out.index[0] <= idx[10] and out.index[-1] >= idx[21]
+
+
+def test_horizon_slice_short_series_unchanged():
+    r = pd.Series(0.01, index=pd.date_range("2000-01-31", periods=10, freq="ME"))
+    assert analysis.horizon_slice(r, 40).equals(r)
+
+
+def test_sequence_risk_scenarios_respect_n_months():
+    r = pd.Series(0.01, index=pd.date_range("2000-01-31", periods=100, freq="ME"))
+    paths = analysis.sequence_risk_scenarios(r, 0.0, 10.0, window=12, n_months=36)
+    assert all(len(p) == 37 for p in paths.values())

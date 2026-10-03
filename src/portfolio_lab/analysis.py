@@ -551,8 +551,24 @@ def worst_window_start(series: np.ndarray, window: int = 12) -> int:
     return int(growth.argmin())
 
 
+def horizon_slice(series: pd.Series, n_months: int, window: int = 12) -> pd.Series:
+    """
+    The `n_months` stretch of `series` that contains its worst `window`-month block, placed as
+    centrally as the history allows. The whole series if it is not longer than `n_months`.
+    """
+    if len(series) <= n_months:
+        return series
+    worst = worst_window_start(series.to_numpy(), window)
+    start = min(max(worst + window // 2 - n_months // 2, 0), len(series) - n_months)
+    return series.iloc[start : start + n_months]
+
+
 def sequence_risk_scenarios(
-    series: pd.Series, initial_value: float, monthly_contribution: float, window: int = 12
+    series: pd.Series,
+    initial_value: float,
+    monthly_contribution: float,
+    window: int = 12,
+    n_months: int | None = None,
 ) -> dict[str, np.ndarray]:
     """
     Replay the same monthly returns in different orders and track the portfolio value.
@@ -566,11 +582,15 @@ def sequence_risk_scenarios(
     initial_value (float): Starting portfolio value.
     monthly_contribution (float): Total contribution added at the start of each month.
     window (int): Length in months of the "worst block" that is moved around.
+    n_months (int | None): If given, replay only this many months (see `horizon_slice`), e.g.
+    the simulation horizon, instead of the whole history.
 
     Returns:
     dict[str, np.ndarray]: Value path per scenario: "Historical order", "Reversed",
     "Worst block first" and "Worst block last".
     """
+    if n_months is not None:
+        series = horizon_slice(series, n_months, window)
     r = series.to_numpy()
     if not 1 <= window < len(r):
         raise ValueError("window must be between 1 and the number of months minus one.")
