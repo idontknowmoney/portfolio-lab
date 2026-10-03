@@ -1,0 +1,45 @@
+name: CI
+
+on:
+    pull_request:
+        branches: [main, develop]
+    push:
+        branches: [main, develop]
+
+permissions:
+    contents: read
+
+jobs:
+    lint-test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: astral-sh/setup-uv@v6
+              with:
+                  enable-cache: true
+
+            - name: Install dependencies
+              run: uv sync --locked
+
+            - name: Ruff lint
+              run: uv run ruff check .
+
+            - name: Ruff format
+              run: uv run ruff format --check .
+
+            - name: Tests
+              run: uv run pytest
+
+    source-branch:
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Only develop, hotfix/* and release/* may target main
+              env:
+                  HEAD_REF: ${{ github.head_ref }}
+              run: |
+                  case "$HEAD_REF" in
+                      develop|hotfix/*|release/*) echo "OK: $HEAD_REF -> main" ;;
+                      *) echo "::error::PRs into main must come from develop, hotfix/* or release/* (got '$HEAD_REF')"; exit 1 ;;
+                  esac
