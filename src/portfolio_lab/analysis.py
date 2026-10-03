@@ -178,6 +178,32 @@ def proxy_quality(etf: pd.DataFrame, proxy: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).T.astype({"Overlap months": int})
 
 
+def history_comparison(cfg: Config, prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Final-value distribution with only the ETFs' own history versus with proxies spliced in.
+
+    Parameters:
+    cfg (Config): The portfolio and simulation configuration (its `use_proxies` is ignored).
+    prices (pd.DataFrame): Raw prices with (ticker, field) columns, as returned by `load_prices`.
+
+    Returns:
+    pd.DataFrame: One row per history with its first month, length, P5/P50/P95 final value and
+    P(loss), the share of paths ending below the total contributed.
+    """
+    contributed = contributed_path(cfg)
+    rows = {}
+    for label, use_proxies in {"ETFs only": False, "With proxies": True}.items():
+        returns, _ = build_returns(prices, cfg.portfolio.assets, use_proxies)
+        total = run_simulation(cfg, returns).sum(axis=2)
+        summary = final_value_summary(total, contributed)
+        rows[label] = {
+            "From": f"{returns.index[0]:%Y-%m}",
+            "Months": len(returns),
+            **summary[["P5", "P50", "P95", "P(loss)"]],
+        }
+    return pd.DataFrame(rows).T
+
+
 def haircut_returns(returns: pd.DataFrame, annual_haircut: float) -> pd.DataFrame:
     """
     Subtract a flat annual haircut (spread evenly over 12 months) from every monthly return.

@@ -88,26 +88,41 @@ Run the simulation by opening the notebook (in VS Code, or `uv run jupyter lab` 
 `notebooks/01_monte_carlo.ipynb`. The first run downloads prices into `data/raw/prices.parquet`;
 later runs reuse them (pass `refresh=True` to `load_prices` to re-download).
 
-The simulation resamples only the window where *every* asset has data, so the youngest ETF
-sets the start. The notebook prints that window (`history_window`) and re-runs the projection
-with an annual return haircut (`sensitivity_to_haircut`). Treat the baseline as optimistic: the
-window is short and mostly a bull market.
+Each ETF only has a short history, and the youngest one would set the window for all of them.
+To avoid that, each asset can list a `proxy` (one or more tickers with weights summing to 1 and
+a quote currency): before the ETF launched, the proxy's returns are used instead, converted from
+USD to EUR with `EURUSD=X`; from launch onward the ETF's own returns are used.
+
+```toml
+proxy = [
+  { ticker = "SPY", currency = "USD", weight = 0.7 },
+  { ticker = "EFA", currency = "USD", weight = 0.3 },
+]
+```
+
+Set `use_proxies = false` under `[simulation]` to use ETF history only. The notebook prints the
+window (`history_window`), how well each proxy tracked its ETF (`proxy_quality`), compares ETF-only
+with extended history (`history_comparison`) and re-runs with an annual return haircut
+(`sensitivity_to_haircut`). Proxies are not the real funds (different index, no TER), so treat
+the results as indicative.
 
 Or use the library directly:
 
 ```python
 from portfolio_lab.analysis import (
+    build_returns,
     contributed_path,
     final_value_summary,
-    monthly_returns_from_prices,
+    required_tickers,
     run_simulation,
 )
 from portfolio_lab.config import load_config
 from portfolio_lab.data import load_prices
 
 cfg = load_config()
-tickers = [a.ticker for a in cfg.portfolio.assets]
-returns = monthly_returns_from_prices(load_prices(tickers), tickers)
+assets = cfg.portfolio.assets
+prices = load_prices(required_tickers(assets))
+returns, _ = build_returns(prices, assets, cfg.simulation.use_proxies)
 
 paths = run_simulation(cfg, returns)  # (n_paths, n_months + 1, n_assets)
 total = paths.sum(axis=2)
