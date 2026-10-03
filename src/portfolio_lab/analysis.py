@@ -7,58 +7,175 @@ import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from portfolio_lab.config import Config
-from portfolio_lab.data import to_monthly_returns
+from portfolio_lab.config import Asset, Config
+from portfolio_lab.data import blend, series_monthly_returns, splice, to_eur
 from portfolio_lab.simulate import simulate
 
 QUANTILES = (5, 10, 25, 50, 75, 95)
 FIGURES_DIR = Path(__file__).resolve().parents[2] / "figures"
 
 
-def monthly_returns_from_prices(prices: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
-    """
-    Compute monthly returns from raw yfinance prices.
+FX_TICKER = "EURUSD=X"
 
-    Only dates where every ticker has data are kept, so the shortest history sets the window.
+
+def required_tickers(assets: list[Asset]) -> list[str]:
+    """
+    Every ticker `build_returns` needs: the ETFs, their proxy components and, if any proxy is
+    quoted in USD, the EURUSD rate. Duplicates are removed, order is kept.
+    """
+    tickers = [a.ticker for a in assets]
+    tickers += [c.ticker for a in assets for c in a.proxy]
+    if any(c.currency == "USD" for a in assets for c in a.proxy):
+        tickers.append(FX_TICKER)
+    return list(dict.fromkeys(tickers))
+
+
+def _monthly_returns(prices: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
+    """Per-series monthly returns from raw yfinance prices (adjusted closes)."""
+    return series_monthly_returns(prices.xs("Close", axis=1, level=1)[tickers])
+
+
+def etf_returns(prices: pd.DataFrame, assets: list[Asset]) -> pd.DataFrame:
+    """
+    Monthly returns of each asset's own ETF, one column per ticker, NaN before its launch.
 
     Parameters:
     prices (pd.DataFrame): Raw prices with (ticker, field) columns, as returned by `load_prices`.
-    tickers (list[str]): Tickers to include, in the desired column order.
+    assets (list[Asset]): The portfolio's assets.
+    """
+    return _monthly_returns(prices, [a.ticker for a in assets])
+
+
+def proxy_returns(prices: pd.DataFrame, assets: list[Asset]) -> pd.DataFrame:
+    """
+    Monthly EUR returns of each asset's proxy blend, one column per asset ticker.
+
+    USD components are converted with the EURUSD rate, then the components are blended with
+    their weights. Assets without a proxy give an all-NaN column.
+
+    Parameters:
+    prices (pd.DataFrame): Raw prices with (ticker, field) columns, as returned by `load_prices`.
+    assets (list[Asset]): The portfolio's assets.
+    """
+    monthly = _monthly_returns(prices, required_tickers(assets))
+    out = {}
+    for asset in assets:
+        if not asset.proxy:
+            out[asset.ticker] = pd.Series(np.nan, index=monthly.index)
+            continue
+        parts = pd.DataFrame(
+            {
+                c.ticker: (
+                    to_eur(monthly[c.ticker], monthly[FX_TICKER])
+                    if c.currency == "USD"
+                    else monthly[c.ticker]
+                )
+                for c in asset.proxy
+            }
+        )
+        out[asset.ticker] = blend(parts, [c.weight for c in asset.proxy]).reindex(monthly.index)
+    return pd.DataFrame(out)
+
+
+def spliced_returns(etf: pd.DataFrame, proxy: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Per asset, proxy returns before the ETF launched and the ETF's own returns after.
+
+    Parameters:
+    etf (pd.DataFrame): Output of `etf_returns`.
+    proxy (pd.DataFrame): Output of `proxy_returns`.
 
     Returns:
-    pd.DataFrame: Monthly returns with one column per ticker.
+    tuple[pd.DataFrame, pd.DataFrame]: The spliced returns (NaN where an asset has no data) and
+    a boolean frame of the same shape that is True where the month came from a proxy.
     """
-    closes = prices.xs("Close", axis=1, level=1)[tickers].dropna()
-    return to_monthly_returns(closes)
+    spliced = pd.DataFrame({t: splice(etf[t], proxy[t]) for t in etf.columns})
+    is_proxy = spliced.notna() & ~etf.reindex(spliced.index).notna()
+    return spliced, is_proxy
 
 
-def history_window(prices: pd.DataFrame, tickers: list[str], block_size: int) -> pd.DataFrame:
+def build_returns(
+    prices: pd.DataFrame, assets: list[Asset], use_proxies: bool = True
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Where each ticker's history starts and which one limits the simulation window.
+    Monthly returns for the simulation: each asset's history (extended with its proxy if
+    `use_proxies`), restricted to the months where every asset has data, so the youngest
+    series sets the window.
 
     Parameters:
     prices (pd.DataFrame): Raw prices with (ticker, field) columns, as returned by `load_prices`.
-    tickers (list[str]): Tickers in the portfolio.
+    assets (list[Asset]): The portfolio's assets.
+    use_proxies (bool): Splice proxies in before each ETF's launch.
+
+    Returns:
+    tuple[pd.DataFrame, pd.DataFrame]: Returns with one column per ticker, and a boolean frame
+    marking which months come from a proxy.
+    """
+    etf = etf_returns(prices, assets)
+    if use_proxies:
+        spliced, is_proxy = spliced_returns(etf, proxy_returns(prices, assets))
+    else:
+        spliced, is_proxy = etf, pd.DataFrame(False, index=etf.index, columns=etf.columns)
+    common = spliced.dropna()
+    return common, is_proxy.loc[common.index]
+
+
+def history_window(spliced: pd.DataFrame, is_proxy: pd.DataFrame, block_size: int) -> pd.DataFrame:
+    """
+    Where each asset's history starts, how much of it is proxy, and the common window.
+
+    Parameters:
+    spliced (pd.DataFrame): Spliced returns before intersecting assets, from `spliced_returns`.
+    is_proxy (pd.DataFrame): Which of those months are proxy, from `spliced_returns`.
     block_size (int): Months per bootstrap block.
 
     Returns:
-    pd.DataFrame: One row per ticker with its first price date, plus a final "Common window" row
-    holding the months of returns actually resampled and the number of distinct blocks of
-    `block_size` months (months - block_size + 1) the bootstrap can draw from.
+    pd.DataFrame: One row per asset, then a "Common window" row, with the first ETF month, the
+    first month used, ETF and proxy month counts, and the distinct blocks of `block_size` months
+    (months - block_size + 1) the bootstrap can draw from.
     """
-    closes = prices.xs("Close", axis=1, level=1)[tickers]
-    common = closes.dropna()
-    returns = to_monthly_returns(common)
-    first = closes.apply(lambda s: s.first_valid_index())
-    table = pd.DataFrame({"First price": first.dt.strftime("%Y-%m-%d")})
-    table["Months"] = closes.apply(lambda s: len(to_monthly_returns(s.dropna())))
-    table["Distinct blocks"] = (table["Months"] - block_size + 1).clip(lower=0)
-    table.loc["Common window"] = [
-        f"{common.index[0]:%Y-%m-%d}",
-        len(returns),
-        max(len(returns) - block_size + 1, 0),
-    ]
-    return table
+
+    def row(used: pd.Series, from_proxy: pd.Series) -> dict[str, object]:
+        etf_months = used & ~from_proxy
+        first = lambda m: f"{m.index[m][0]:%Y-%m}" if m.any() else "-"  # noqa: E731
+        return {
+            "First ETF month": first(etf_months),
+            "First month used": first(used),
+            "ETF months": int(etf_months.sum()),
+            "Proxy months": int((used & from_proxy).sum()),
+            "Distinct blocks": max(int(used.sum()) - block_size + 1, 0),
+        }
+
+    valid = spliced.notna()
+    rows = {t: row(valid[t], is_proxy[t]) for t in spliced.columns}
+    rows["Common window"] = row(valid.all(axis=1), is_proxy.any(axis=1))
+    return pd.DataFrame(rows).T
+
+
+def proxy_quality(etf: pd.DataFrame, proxy: pd.DataFrame) -> pd.DataFrame:
+    """
+    How closely each proxy tracked its ETF over the months where both exist.
+
+    Parameters:
+    etf (pd.DataFrame): Output of `etf_returns`.
+    proxy (pd.DataFrame): Output of `proxy_returns`.
+
+    Returns:
+    pd.DataFrame: One row per asset with the overlap months, the monthly return correlation, the
+    annualised tracking difference (mean of ETF minus proxy, times 12) and tracking error (std of
+    the difference, times sqrt(12)).
+    """
+    rows = {}
+    for t in etf.columns:
+        both = pd.concat([etf[t], proxy[t]], axis=1, keys=["etf", "proxy"]).dropna()
+        diff = both["etf"] - both["proxy"]
+        rows[t] = {
+            "Overlap months": len(both),
+            "Correlation": both["etf"].corr(both["proxy"]) if len(both) > 1 else np.nan,
+            "Tracking diff": diff.mean() * 12,
+            "Tracking error": diff.std() * np.sqrt(12),
+        }
+    return pd.DataFrame(rows).T.astype({"Overlap months": int})
 
 
 def haircut_returns(returns: pd.DataFrame, annual_haircut: float) -> pd.DataFrame:
