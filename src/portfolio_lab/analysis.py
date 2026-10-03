@@ -295,6 +295,106 @@ def plot_final_histogram(
     return fig
 
 
+def portfolio_return_series(cfg: Config, returns: pd.DataFrame) -> pd.Series:
+    """
+    Single monthly return series for the whole portfolio, weighting each asset by its share of
+    the starting value (constant weights, i.e. rebalanced monthly).
+
+    Parameters:
+    cfg (Config): The portfolio and simulation configuration.
+    returns (pd.DataFrame): Historical monthly returns with columns in the config's asset order.
+
+    Returns:
+    pd.Series: Weighted monthly returns, same index as `returns`.
+    """
+    assets = cfg.portfolio.assets
+    values = np.array([a.initial_value for a in assets])
+    weights = values / values.sum() if values.sum() else np.full(len(assets), 1 / len(assets))
+    return pd.Series(
+        returns[[a.ticker for a in assets]].to_numpy() @ weights, index=returns.index, name="return"
+    )
+
+
+def final_value_of_sequence(
+    series: np.ndarray, initial_value: float, monthly_contribution: float
+) -> np.ndarray:
+    """
+    Portfolio value over time when replaying `series` in order, contributing at the start of
+    each month (same timing as `simulate`).
+
+    Returns:
+    np.ndarray: Shape (len(series) + 1,).
+    """
+    values = np.empty(len(series) + 1)
+    values[0] = v = initial_value
+    for t, r in enumerate(series):
+        v = (v + monthly_contribution) * (1 + r)
+        values[t + 1] = v
+    return values
+
+
+def worst_window_start(series: np.ndarray, window: int = 12) -> int:
+    """Index where the `window`-month block with the lowest compounded return starts."""
+    growth = np.array(
+        [np.prod(1 + series[i : i + window]) for i in range(len(series) - window + 1)]
+    )
+    return int(growth.argmin())
+
+
+def sequence_risk_scenarios(
+    series: pd.Series, initial_value: float, monthly_contribution: float, window: int = 12
+) -> dict[str, np.ndarray]:
+    """
+    Replay the same monthly returns in different orders and track the portfolio value.
+
+    The returns are identical in every scenario, so without contributions the final value would
+    be too. With contributions, a bad stretch late in the horizon hits a bigger pot than an
+    early one, so the final values differ.
+
+    Parameters:
+    series (pd.Series): Monthly returns, in historical order.
+    initial_value (float): Starting portfolio value.
+    monthly_contribution (float): Total contribution added at the start of each month.
+    window (int): Length in months of the "worst block" that is moved around.
+
+    Returns:
+    dict[str, np.ndarray]: Value path per scenario: "Historical order", "Reversed",
+    "Worst block first" and "Worst block last".
+    """
+    r = series.to_numpy()
+    if not 1 <= window < len(r):
+        raise ValueError("window must be between 1 and the number of months minus one.")
+    i = worst_window_start(r, window)
+    block, rest = r[i : i + window], np.concatenate([r[:i], r[i + window :]])
+    orders = {
+        "Historical order": r,
+        "Reversed": r[::-1],
+        "Worst block first": np.concatenate([block, rest]),
+        "Worst block last": np.concatenate([rest, block]),
+    }
+    return {
+        name: final_value_of_sequence(o, initial_value, monthly_contribution)
+        for name, o in orders.items()
+    }
+
+
+def sequence_risk_summary(scenarios: dict[str, np.ndarray]) -> pd.Series:
+    """Final value of each sequence-risk scenario."""
+    return pd.Series({name: path[-1] for name, path in scenarios.items()}, name="Final value")
+
+
+def plot_sequence_risk(scenarios: dict[str, np.ndarray], currency: str) -> Figure:
+    """Portfolio value over time for each ordering of the same returns."""
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for name, path in scenarios.items():
+        ax.plot(np.arange(len(path)) / 12, path, label=name)
+    ax.set_xlabel("Years")
+    ax.set_ylabel(f"Portfolio value ({currency})")
+    ax.set_title("Sequence risk: same returns, different order")
+    ax.legend()
+    return fig
+
+
 def save_figure(fig: Figure, name: str, dpi: int = 200) -> Path:
     """
     Save a figure as a PNG in the project's figures/ directory.
