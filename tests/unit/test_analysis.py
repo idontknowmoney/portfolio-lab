@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from portfolio_lab import analysis
-from portfolio_lab.config import Config
+from portfolio_lab.config import Asset, Config
 
 
 @pytest.fixture
@@ -142,21 +142,80 @@ def test_haircut_returns_subtracts_monthly_share():
     np.testing.assert_allclose(out["A"], [0.0, 0.01])
 
 
-def test_history_window_reports_binding_ticker():
-    idx = pd.date_range("2020-01-01", periods=400, freq="D")
-    closes = pd.DataFrame({"A": np.arange(1.0, 401), "B": np.arange(1.0, 401)}, index=idx)
-    closes.loc[idx[:200], "B"] = np.nan
-    prices = pd.concat(
-        {
-            "A": closes[["A"]].rename(columns={"A": "Close"}),
-            "B": closes[["B"]].rename(columns={"B": "Close"}),
-        },
-        axis=1,
+def _prices(series: dict[str, pd.Series]) -> pd.DataFrame:
+    """Raw-prices frame with (ticker, "Close") columns, as yfinance returns it."""
+    return pd.concat({t: pd.DataFrame({"Close": s}) for t, s in series.items()}, axis=1)
+
+
+@pytest.fixture
+def proxy_prices():
+    """OLD launches 2020-07; its proxy (USD) exists all along; EURUSD flat."""
+    idx = pd.date_range("2020-01-01", "2021-06-30", freq="D")
+    n = np.arange(len(idx))
+    old = pd.Series(100.0 * 1.001**n, index=idx)
+    young = pd.Series(100.0 * 1.001**n, index=idx).where(idx >= "2020-07-01")
+    proxy = pd.Series(50.0 * 1.001**n, index=idx)
+    fx = pd.Series(1.1, index=idx)
+    return _prices({"OLD": old, "YOUNG": young, "PX": proxy, analysis.FX_TICKER: fx})
+
+
+@pytest.fixture
+def proxy_assets():
+    def asset(ticker, proxy):
+        return Asset(
+            name=ticker, isin=ticker, ticker=ticker, contribution_weight=0.5, initial_value=0,
+            proxy=proxy,
+        )  # fmt: skip
+
+    px = [{"ticker": "PX", "currency": "USD", "weight": 1.0}]
+    return [asset("OLD", []), asset("YOUNG", px)]
+
+
+def test_required_tickers_adds_proxies_and_fx(proxy_assets):
+    assert analysis.required_tickers(proxy_assets) == ["OLD", "YOUNG", "PX", analysis.FX_TICKER]
+
+
+def test_build_returns_window_starts_at_proxy_and_flags_proxy_months(proxy_prices, proxy_assets):
+    returns, is_proxy = analysis.build_returns(proxy_prices, proxy_assets, use_proxies=True)
+    no_proxy, _ = analysis.build_returns(proxy_prices, proxy_assets, use_proxies=False)
+
+    assert returns.index[0] < no_proxy.index[0]
+    assert returns.index[0] == pd.Timestamp("2020-02-29")
+    assert is_proxy["OLD"].eq(False).all()
+    # YOUNG launched mid-2020, so June is the last month filled by the proxy
+    assert list(is_proxy.index[is_proxy["YOUNG"]]) == list(
+        pd.date_range("2020-02-29", "2020-07-31", freq="ME")
     )
-    out = analysis.history_window(prices, ["A", "B"], block_size=3)
-    assert out.loc["Common window", "First price"] == "2020-07-19"
-    assert out.loc["Common window", "Months"] < out.loc["A", "Months"]
-    assert out.loc["A", "Distinct blocks"] == out.loc["A", "Months"] - 2
+    assert not returns.isna().any().any()
+
+
+def test_build_returns_without_proxies_flags_nothing(proxy_prices, proxy_assets):
+    returns, is_proxy = analysis.build_returns(proxy_prices, proxy_assets, use_proxies=False)
+    assert not is_proxy.any().any()
+    assert list(returns.columns) == ["OLD", "YOUNG"]
+
+
+def test_history_window_counts_proxy_months(proxy_prices, proxy_assets):
+    etf = analysis.etf_returns(proxy_prices, proxy_assets)
+    spliced, is_proxy = analysis.spliced_returns(
+        etf, analysis.proxy_returns(proxy_prices, proxy_assets)
+    )
+    out = analysis.history_window(spliced, is_proxy, block_size=3)
+
+    assert out.loc["OLD", "Proxy months"] == 0
+    assert out.loc["YOUNG", "Proxy months"] > 0
+    common = out.loc["Common window"]
+    assert common["ETF months"] + common["Proxy months"] == len(spliced.dropna())
+    assert common["Distinct blocks"] == len(spliced.dropna()) - 2
+
+
+def test_proxy_quality_perfect_tracker():
+    idx = pd.date_range("2020-01-31", periods=12, freq="ME")
+    r = pd.Series(np.linspace(-0.02, 0.03, 12), index=idx)
+    out = analysis.proxy_quality(pd.DataFrame({"A": r}), pd.DataFrame({"A": r}))
+    assert out.loc["A", "Overlap months"] == 12
+    assert out.loc["A", "Correlation"] == pytest.approx(1.0)
+    assert out.loc["A", "Tracking diff"] == pytest.approx(0.0)
 
 
 def test_sensitivity_to_haircut_lowers_median(cfg):
