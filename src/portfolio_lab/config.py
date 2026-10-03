@@ -1,7 +1,7 @@
 import math
 import tomllib
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -18,14 +18,27 @@ class _Model(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+class ProxyComponent(_Model):
+    ticker: str
+    currency: Literal["EUR", "USD"]
+    weight: float = Field(gt=0, le=1)
+
+
 class Asset(_Model):
     name: str
     isin: str
     ticker: str
     contribution_weight: float = Field(ge=0, le=1)
     initial_value: float = Field(ge=0)
-    cost_basis: float = Field(ge=0)
     cost_basis: float = Field(ge=0, default=0)
+    proxy: list[ProxyComponent] = []
+
+    @model_validator(mode="after")
+    def _proxy_weights_sum_to_one(self) -> Self:
+        total = sum(c.weight for c in self.proxy)
+        if self.proxy and not math.isclose(total, 1.0, abs_tol=1e-9):
+            raise ValueError(f"{self.name} proxy weights sum to {total}, not 1")
+        return self
 
 
 class PortfolioConfig(_Model):
@@ -48,6 +61,7 @@ class SimulationConfig(_Model):
     block_size: int = Field(gt=0)
     seed: int
     rebalance: str
+    use_proxies: bool = True
 
 
 class Config(_Model):

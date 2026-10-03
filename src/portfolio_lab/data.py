@@ -20,7 +20,7 @@ def download_prices(tickers: list[str]) -> pd.DataFrame:
     Returns:
     pd.DataFrame: A DataFrame containing the historical stock prices.
     """
-    data = yf.download(tickers, period="max", group_by="ticker")
+    data = yf.download(tickers, period="max", group_by="ticker", auto_adjust=True)
     return data
 
 
