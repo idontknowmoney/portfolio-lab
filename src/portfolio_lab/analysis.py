@@ -239,6 +239,47 @@ def plot_gain_fan_chart(total: np.ndarray, cost: np.ndarray, currency: str) -> F
     return fig
 
 
+def weights_summary(paths: np.ndarray, names: list[str]) -> pd.DataFrame:
+    """
+    Each asset's share of the portfolio value at the start and the P5/P50/P95 at the end.
+
+    Parameters:
+    paths (np.ndarray): Simulated asset values, shape (n_paths, n_months + 1, n_assets).
+    names (list[str]): Asset names, in the same order as the last axis of `paths`.
+
+    Returns:
+    pd.DataFrame: One row per asset, columns "Start", "P5", "P50", "P95" (shares, 0-1).
+    """
+    weights = paths / paths.sum(axis=2, keepdims=True)
+    p5, p50, p95 = np.percentile(weights[:, -1], [5, 50, 95], axis=0)
+    return pd.DataFrame({"Start": weights[0, 0], "P5": p5, "P50": p50, "P95": p95}, index=names)
+
+
+def plot_weights_over_time(paths: np.ndarray, names: list[str]) -> Figure:
+    """
+    Median and P5-P95 band of each asset's share of the portfolio value over time.
+
+    Parameters:
+    paths (np.ndarray): Simulated asset values, shape (n_paths, n_months + 1, n_assets).
+    names (list[str]): Asset names, in the same order as the last axis of `paths`.
+    """
+    weights = paths / paths.sum(axis=2, keepdims=True)
+    p5, p50, p95 = np.percentile(weights, [5, 50, 95], axis=0)
+    years = np.arange(weights.shape[1]) / 12
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for i, name in enumerate(names):
+        (line,) = ax.plot(years, p50[:, i], label=name)
+        ax.fill_between(years, p5[:, i], p95[:, i], color=line.get_color(), alpha=0.2)
+    ax.set_xlim(years[0], years[-1])
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
+    ax.set_xlabel("Years")
+    ax.set_ylabel("Share of portfolio value")
+    ax.set_title("Asset weights over time (median and P5-P95)")
+    ax.legend()
+    return fig
+
+
 def plot_final_histogram(
     total: np.ndarray, contributed: np.ndarray, currency: str, cost: np.ndarray | None = None
 ) -> Figure:
