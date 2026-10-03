@@ -146,7 +146,7 @@ ETF-only against extended history (`history_comparison`).
 - The bootstrap only reuses months that happened. It cannot produce a crash worse than anything in
   the window.
 
-### Development
+## Development
 
 ```bash
 uv run pytest                # tests
