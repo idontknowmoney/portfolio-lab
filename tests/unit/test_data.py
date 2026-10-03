@@ -31,7 +31,7 @@ def test_download_prices_calls_yfinance(monkeypatch, prices):
 
     assert result is prices
     assert calls["tickers"] == ["AAA"]
-    assert calls["kwargs"] == {"period": "max", "group_by": "ticker"}
+    assert calls["kwargs"] == {"period": "max", "group_by": "ticker", "auto_adjust": True}
 
 
 def test_load_prices_reads_local_file(monkeypatch, prices):
