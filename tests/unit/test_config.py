@@ -76,3 +76,38 @@ def test_rejects_unknown_keys(tmp_path: Path):
     path.write_text(VALID.replace("seed = 1", "seed = 1\nn_path = 3"))
     with pytest.raises(ValueError, match="n_path"):
         load_config(path, tmp_path / "missing.toml")
+
+
+PROXY = """
+proxy = [
+  { ticker = "SPY", currency = "USD", weight = 0.7 },
+  { ticker = "EFA", currency = "USD", weight = 0.3 },
+]
+"""
+
+
+def test_proxy_defaults(tmp_path: Path):
+    path = tmp_path / "portfolio.toml"
+    path.write_text(VALID)
+    config = load_config(path, tmp_path / "missing.toml")
+    assert config.portfolio.assets[0].proxy == []
+    assert config.simulation.use_proxies is True
+
+
+def test_loads_proxy_blend(tmp_path: Path):
+    path = tmp_path / "portfolio.toml"
+    path.write_text(VALID.replace("cost_basis = 8", "cost_basis = 8" + PROXY))
+    proxy = load_config(path, tmp_path / "missing.toml").portfolio.assets[0].proxy
+    assert [c.ticker for c in proxy] == ["SPY", "EFA"]
+
+
+def test_rejects_proxy_weights_not_summing_to_one(tmp_path: Path):
+    path = tmp_path / "portfolio.toml"
+    path.write_text(VALID.replace("cost_basis = 8", "cost_basis = 8" + PROXY.replace("0.3", "0.2")))
+    with pytest.raises(ValueError, match="proxy weights sum to"):
+        load_config(path, tmp_path / "missing.toml")
+
+
+def test_example_config_has_proxies():
+    config = load_config(EXAMPLE_CONFIG_PATH, EXAMPLE_CONFIG_PATH)
+    assert all(a.proxy for a in config.portfolio.assets)

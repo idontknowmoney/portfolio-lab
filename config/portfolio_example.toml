@@ -9,6 +9,10 @@ ticker = "EUNL.DE"
 contribution_weight = 0.70
 initial_value = 0
 cost_basis = 0
+proxy = [
+  { ticker = "SPY", currency = "USD", weight = 0.7 },
+  { ticker = "EFA", currency = "USD", weight = 0.3 },
+]
 
 [[portfolio.assets]]
 name = "Emerging Markets IMI"
@@ -17,6 +21,7 @@ ticker = "IS3N.DE"
 contribution_weight = 0.20
 initial_value = 0
 cost_basis = 0
+proxy = [{ ticker = "EEM", currency = "USD", weight = 1.0 }]
 
 [[portfolio.assets]]
 name = "MSCI Europe"
@@ -25,6 +30,7 @@ ticker = "EUNK.DE"
 contribution_weight = 0.10
 initial_value = 0
 cost_basis = 0
+proxy = [{ ticker = "VGK", currency = "USD", weight = 1.0 }]
 
 [simulation]
 monthly_contribution = 200
