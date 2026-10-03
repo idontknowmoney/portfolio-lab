@@ -239,6 +239,47 @@ def plot_gain_fan_chart(total: np.ndarray, cost: np.ndarray, currency: str) -> F
     return fig
 
 
+def weights_summary(paths: np.ndarray, names: list[str]) -> pd.DataFrame:
+    """
+    Each asset's share of the portfolio value at the start and the P5/P50/P95 at the end.
+
+    Parameters:
+    paths (np.ndarray): Simulated asset values, shape (n_paths, n_months + 1, n_assets).
+    names (list[str]): Asset names, in the same order as the last axis of `paths`.
+
+    Returns:
+    pd.DataFrame: One row per asset, columns "Start", "P5", "P50", "P95" (shares, 0-1).
+    """
+    weights = paths / paths.sum(axis=2, keepdims=True)
+    p5, p50, p95 = np.percentile(weights[:, -1], [5, 50, 95], axis=0)
+    return pd.DataFrame({"Start": weights[0, 0], "P5": p5, "P50": p50, "P95": p95}, index=names)
+
+
+def plot_weights_over_time(paths: np.ndarray, names: list[str]) -> Figure:
+    """
+    Median and P5-P95 band of each asset's share of the portfolio value over time.
+
+    Parameters:
+    paths (np.ndarray): Simulated asset values, shape (n_paths, n_months + 1, n_assets).
+    names (list[str]): Asset names, in the same order as the last axis of `paths`.
+    """
+    weights = paths / paths.sum(axis=2, keepdims=True)
+    p5, p50, p95 = np.percentile(weights, [5, 50, 95], axis=0)
+    years = np.arange(weights.shape[1]) / 12
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for i, name in enumerate(names):
+        (line,) = ax.plot(years, p50[:, i], label=name)
+        ax.fill_between(years, p5[:, i], p95[:, i], color=line.get_color(), alpha=0.2)
+    ax.set_xlim(years[0], years[-1])
+    ax.set_ylim(0, 1)
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
+    ax.set_xlabel("Years")
+    ax.set_ylabel("Share of portfolio value")
+    ax.set_title("Asset weights over time (median and P5-P95)")
+    ax.legend()
+    return fig
+
+
 def plot_final_histogram(
     total: np.ndarray, contributed: np.ndarray, currency: str, cost: np.ndarray | None = None
 ) -> Figure:
@@ -250,6 +291,106 @@ def plot_final_histogram(
         ax.axvline(cost[-1], color="k", linestyle=":", label="Cost basis + contributions")
     ax.set_xlabel(f"Final value ({currency})")
     ax.set_ylabel("Paths")
+    ax.legend()
+    return fig
+
+
+def portfolio_return_series(cfg: Config, returns: pd.DataFrame) -> pd.Series:
+    """
+    Single monthly return series for the whole portfolio, weighting each asset by its share of
+    the starting value (constant weights, i.e. rebalanced monthly).
+
+    Parameters:
+    cfg (Config): The portfolio and simulation configuration.
+    returns (pd.DataFrame): Historical monthly returns with columns in the config's asset order.
+
+    Returns:
+    pd.Series: Weighted monthly returns, same index as `returns`.
+    """
+    assets = cfg.portfolio.assets
+    values = np.array([a.initial_value for a in assets])
+    weights = values / values.sum() if values.sum() else np.full(len(assets), 1 / len(assets))
+    return pd.Series(
+        returns[[a.ticker for a in assets]].to_numpy() @ weights, index=returns.index, name="return"
+    )
+
+
+def final_value_of_sequence(
+    series: np.ndarray, initial_value: float, monthly_contribution: float
+) -> np.ndarray:
+    """
+    Portfolio value over time when replaying `series` in order, contributing at the start of
+    each month (same timing as `simulate`).
+
+    Returns:
+    np.ndarray: Shape (len(series) + 1,).
+    """
+    values = np.empty(len(series) + 1)
+    values[0] = v = initial_value
+    for t, r in enumerate(series):
+        v = (v + monthly_contribution) * (1 + r)
+        values[t + 1] = v
+    return values
+
+
+def worst_window_start(series: np.ndarray, window: int = 12) -> int:
+    """Index where the `window`-month block with the lowest compounded return starts."""
+    growth = np.array(
+        [np.prod(1 + series[i : i + window]) for i in range(len(series) - window + 1)]
+    )
+    return int(growth.argmin())
+
+
+def sequence_risk_scenarios(
+    series: pd.Series, initial_value: float, monthly_contribution: float, window: int = 12
+) -> dict[str, np.ndarray]:
+    """
+    Replay the same monthly returns in different orders and track the portfolio value.
+
+    The returns are identical in every scenario, so without contributions the final value would
+    be too. With contributions, a bad stretch late in the horizon hits a bigger pot than an
+    early one, so the final values differ.
+
+    Parameters:
+    series (pd.Series): Monthly returns, in historical order.
+    initial_value (float): Starting portfolio value.
+    monthly_contribution (float): Total contribution added at the start of each month.
+    window (int): Length in months of the "worst block" that is moved around.
+
+    Returns:
+    dict[str, np.ndarray]: Value path per scenario: "Historical order", "Reversed",
+    "Worst block first" and "Worst block last".
+    """
+    r = series.to_numpy()
+    if not 1 <= window < len(r):
+        raise ValueError("window must be between 1 and the number of months minus one.")
+    i = worst_window_start(r, window)
+    block, rest = r[i : i + window], np.concatenate([r[:i], r[i + window :]])
+    orders = {
+        "Historical order": r,
+        "Reversed": r[::-1],
+        "Worst block first": np.concatenate([block, rest]),
+        "Worst block last": np.concatenate([rest, block]),
+    }
+    return {
+        name: final_value_of_sequence(o, initial_value, monthly_contribution)
+        for name, o in orders.items()
+    }
+
+
+def sequence_risk_summary(scenarios: dict[str, np.ndarray]) -> pd.Series:
+    """Final value of each sequence-risk scenario."""
+    return pd.Series({name: path[-1] for name, path in scenarios.items()}, name="Final value")
+
+
+def plot_sequence_risk(scenarios: dict[str, np.ndarray], currency: str) -> Figure:
+    """Portfolio value over time for each ordering of the same returns."""
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for name, path in scenarios.items():
+        ax.plot(np.arange(len(path)) / 12, path, label=name)
+    ax.set_xlabel("Years")
+    ax.set_ylabel(f"Portfolio value ({currency})")
+    ax.set_title("Sequence risk: same returns, different order")
     ax.legend()
     return fig
 

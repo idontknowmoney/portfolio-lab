@@ -17,6 +17,9 @@ stays on your machine.
   monthly contribution is split across assets by `contribution_weight` and added at the start of each month.
 - Reports percentiles (P5 to P95) of the final value, the probability of ending below what you put in,
   and gain per asset against its cost basis.
+- Demonstrates sequence risk: replays one historical return series reversed and with its worst
+  12-month block first or last. The returns are identical but, with monthly contributions, the final
+  values are not (a late crash hurts far more than an early one).
 - Plots fan charts, a final-value histogram and a gain fan chart, saved as PNGs in `figures/`.
 
 Rebalancing is not implemented yet: `rebalance` must be `"none"`.

@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from portfolio_lab import analysis
@@ -109,3 +110,27 @@ def test_gain_by_asset_round_trip_with_run_simulation(cfg):
     # zero returns: A ends at 110 + 120 = 230 vs invested 220; B stays 40 vs 50
     assert out.loc["A", "P50 gain"] == pytest.approx(10.0)
     assert out.loc["B", "P50 gain"] == pytest.approx(-10.0)
+
+
+def test_sequence_risk_same_returns_different_final_values():
+    rets = pd.Series([0.01] * 20 + [-0.3] * 4 + [0.01] * 20)
+    sc = analysis.sequence_risk_scenarios(rets, 1000.0, 100.0, window=4)
+    final = {k: v[-1] for k, v in sc.items()}
+    assert final["Worst block last"] < final["Worst block first"]
+
+
+def test_sequence_risk_no_contributions_is_order_independent():
+    rets = pd.Series([0.02, -0.1, 0.03, 0.01, -0.05, 0.04, 0.0, 0.02])
+    sc = analysis.sequence_risk_scenarios(rets, 1000.0, 0.0, window=2)
+    finals = [v[-1] for v in sc.values()]
+    assert finals == pytest.approx([finals[0]] * len(finals))
+
+
+def test_worst_window_start():
+    assert analysis.worst_window_start(np.array([0.1, -0.2, -0.2, 0.1, 0.1]), 2) == 1
+
+
+def test_sequence_risk_summary_final_values():
+    sc = {"a": np.array([100.0, 210.0, 330.0]), "b": np.array([100.0, 150.0, 300.0])}
+    out = analysis.sequence_risk_summary(sc)
+    assert out.to_dict() == {"a": 330.0, "b": 300.0}
