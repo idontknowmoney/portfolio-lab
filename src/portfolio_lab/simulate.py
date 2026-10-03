@@ -6,7 +6,7 @@ import numpy as np
 def simulate(
     initial_values: np.ndarray,
     contribution_weights: np.ndarray,
-    monthly_contribution: np.ndarray,
+    monthly_contribution: float,
     monthly_returns: np.ndarray,
     n_months: int,
     n_paths: int,
@@ -20,7 +20,7 @@ def simulate(
     Parameters:
     initial_values (np.ndarray): Initial values of the portfolio.
     contribution_weights (np.ndarray): Weights for contributions to the portfolio.
-    monthly_contribution (np.ndarray): Monthly contributions to the portfolio.
+    monthly_contribution (float): Total monthly contribution, split by `contribution_weights`.
     monthly_returns (np.ndarray): Monthly returns for each asset in the portfolio.
     n_months (int): Number of months to simulate.
     n_paths (int): Number of simulation paths.
