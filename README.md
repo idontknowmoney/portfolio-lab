@@ -88,6 +88,11 @@ Run the simulation by opening the notebook (in VS Code, or `uv run jupyter lab` 
 `notebooks/01_monte_carlo.ipynb`. The first run downloads prices into `data/raw/prices.parquet`;
 later runs reuse them (pass `refresh=True` to `load_prices` to re-download).
 
+The simulation resamples only the window where *every* asset has data, so the youngest ETF
+sets the start. The notebook prints that window (`history_window`) and re-runs the projection
+with an annual return haircut (`sensitivity_to_haircut`). Treat the baseline as optimistic: the
+window is short and mostly a bull market.
+
 Or use the library directly:
 
 ```python

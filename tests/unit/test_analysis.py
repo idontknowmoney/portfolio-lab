@@ -134,3 +134,33 @@ def test_sequence_risk_summary_final_values():
     sc = {"a": np.array([100.0, 210.0, 330.0]), "b": np.array([100.0, 150.0, 300.0])}
     out = analysis.sequence_risk_summary(sc)
     assert out.to_dict() == {"a": 330.0, "b": 300.0}
+
+
+def test_haircut_returns_subtracts_monthly_share():
+    r = pd.DataFrame({"A": [0.01, 0.02]})
+    out = analysis.haircut_returns(r, 0.12)
+    np.testing.assert_allclose(out["A"], [0.0, 0.01])
+
+
+def test_history_window_reports_binding_ticker():
+    idx = pd.date_range("2020-01-01", periods=400, freq="D")
+    closes = pd.DataFrame({"A": np.arange(1.0, 401), "B": np.arange(1.0, 401)}, index=idx)
+    closes.loc[idx[:200], "B"] = np.nan
+    prices = pd.concat(
+        {
+            "A": closes[["A"]].rename(columns={"A": "Close"}),
+            "B": closes[["B"]].rename(columns={"B": "Close"}),
+        },
+        axis=1,
+    )
+    out = analysis.history_window(prices, ["A", "B"], block_size=3)
+    assert out.loc["Common window", "First price"] == "2020-07-19"
+    assert out.loc["Common window", "Months"] < out.loc["A", "Months"]
+    assert out.loc["A", "Distinct blocks"] == out.loc["A", "Months"] - 2
+
+
+def test_sensitivity_to_haircut_lowers_median(cfg):
+    r = pd.DataFrame({"A": np.full(12, 0.01), "B": np.full(12, 0.01)})
+    out = analysis.sensitivity_to_haircut(cfg, r, haircuts=(0.0, 0.1))
+    assert list(out.index) == ["Baseline", "-10%/yr"]
+    assert out.loc["-10%/yr", "P50"] < out.loc["Baseline", "P50"]

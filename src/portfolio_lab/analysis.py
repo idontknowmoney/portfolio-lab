@@ -32,6 +32,73 @@ def monthly_returns_from_prices(prices: pd.DataFrame, tickers: list[str]) -> pd.
     return to_monthly_returns(closes)
 
 
+def history_window(prices: pd.DataFrame, tickers: list[str], block_size: int) -> pd.DataFrame:
+    """
+    Where each ticker's history starts and which one limits the simulation window.
+
+    Parameters:
+    prices (pd.DataFrame): Raw prices with (ticker, field) columns, as returned by `load_prices`.
+    tickers (list[str]): Tickers in the portfolio.
+    block_size (int): Months per bootstrap block.
+
+    Returns:
+    pd.DataFrame: One row per ticker with its first price date, plus a final "Common window" row
+    holding the months of returns actually resampled and the number of distinct blocks of
+    `block_size` months (months - block_size + 1) the bootstrap can draw from.
+    """
+    closes = prices.xs("Close", axis=1, level=1)[tickers]
+    common = closes.dropna()
+    returns = to_monthly_returns(common)
+    first = closes.apply(lambda s: s.first_valid_index())
+    table = pd.DataFrame({"First price": first.dt.strftime("%Y-%m-%d")})
+    table["Months"] = closes.apply(lambda s: len(to_monthly_returns(s.dropna())))
+    table["Distinct blocks"] = (table["Months"] - block_size + 1).clip(lower=0)
+    table.loc["Common window"] = [
+        f"{common.index[0]:%Y-%m-%d}",
+        len(returns),
+        max(len(returns) - block_size + 1, 0),
+    ]
+    return table
+
+
+def haircut_returns(returns: pd.DataFrame, annual_haircut: float) -> pd.DataFrame:
+    """
+    Subtract a flat annual haircut (spread evenly over 12 months) from every monthly return.
+
+    Parameters:
+    returns (pd.DataFrame): Monthly returns, one column per asset.
+    annual_haircut (float): Annual return to remove, e.g. 0.02 for two percentage points.
+
+    Returns:
+    pd.DataFrame: Haircut monthly returns.
+    """
+    return returns - annual_haircut / 12
+
+
+def sensitivity_to_haircut(
+    cfg: Config, returns: pd.DataFrame, haircuts: tuple[float, ...] = (0.0, 0.02, 0.04)
+) -> pd.DataFrame:
+    """
+    Re-run the simulation with progressively lower historical returns.
+
+    Parameters:
+    cfg (Config): The portfolio and simulation configuration.
+    returns (pd.DataFrame): Historical monthly returns with columns in the config's asset order.
+    haircuts (tuple[float, ...]): Annual haircuts to apply; 0.0 is the unadjusted baseline.
+
+    Returns:
+    pd.DataFrame: One row per haircut with the P5/P50/P95 final value and P(loss), the share of
+    paths ending below the total contributed.
+    """
+    contributed = contributed_path(cfg)
+    rows = {}
+    for h in haircuts:
+        total = run_simulation(cfg, haircut_returns(returns, h)).sum(axis=2)
+        summary = final_value_summary(total, contributed)
+        rows[f"-{h:.0%}/yr" if h else "Baseline"] = summary[["P5", "P50", "P95", "P(loss)"]]
+    return pd.DataFrame(rows).T
+
+
 def annualised_stats(returns: pd.DataFrame) -> pd.DataFrame:
     """
     Annualised mean and volatility of monthly returns, per asset.
