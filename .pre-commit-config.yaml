@@ -20,6 +20,12 @@ repos:
             args: ["--fix"]
           - id: ruff-format
 
+    # Never commit notebook outputs (they can contain personal data)
+    - repo: https://github.com/kynan/nbstripout
+      rev: 0.8.1
+      hooks:
+          - id: nbstripout
+
     # Keep uv.lock in sync with pyproject.toml
     - repo: https://github.com/astral-sh/uv-pre-commit
       rev: 0.12.19
