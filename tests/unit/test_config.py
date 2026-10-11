@@ -92,6 +92,16 @@ def test_proxy_defaults(tmp_path: Path):
     config = load_config(path, tmp_path / "missing.toml")
     assert config.portfolio.assets[0].proxy == []
     assert config.simulation.use_proxies is True
+    assert config.simulation.inflation_annual == pytest.approx(0.02)
+
+
+def test_loads_explicit_inflation_annual(tmp_path: Path):
+    path = tmp_path / "portfolio.toml"
+    path.write_text(
+        VALID.replace('rebalance = "none"', 'rebalance = "none"\ninflation_annual = 0.03')
+    )
+    config = load_config(path, tmp_path / "missing.toml")
+    assert config.simulation.inflation_annual == pytest.approx(0.03)
 
 
 def test_loads_proxy_blend(tmp_path: Path):

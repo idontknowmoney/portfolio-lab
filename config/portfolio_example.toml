@@ -1,5 +1,5 @@
 [portfolio]
-name = "Global indexed"
+name = "Example: 70/20/10 global index"
 currency = "EUR"
 
 [[portfolio.assets]]
@@ -34,8 +34,9 @@ proxy = [{ ticker = "VGK", currency = "USD", weight = 1.0 }]
 
 [simulation]
 monthly_contribution = 200
-horizon_years = 30
+horizon_years = 10
 n_paths = 10000
-block_size = 12
+block_size = 3
 seed = 42
 rebalance = "none"
+inflation_annual = 0.02
