@@ -142,6 +142,57 @@ def test_haircut_returns_subtracts_monthly_share():
     np.testing.assert_allclose(out["A"], [0.0, 0.01])
 
 
+def test_deflator_is_one_today_and_decays():
+    d = analysis.deflator(12, 0.02)
+    assert len(d) == 13
+    assert d[0] == pytest.approx(1.0)
+    assert d[12] == pytest.approx(1 / 1.02)
+
+
+def test_to_real_applies_along_month_axis():
+    inflation = 0.02
+    d = analysis.deflator(12, inflation)
+
+    path = np.full(13, 100.0)
+    np.testing.assert_allclose(analysis.to_real(path, inflation), 100.0 * d)
+
+    total = np.full((4, 13), 100.0)
+    out = analysis.to_real(total, inflation)
+    assert out.shape == total.shape
+    np.testing.assert_allclose(out[0], 100.0 * d)
+
+    paths = np.full((4, 13, 2), 100.0)
+    out = analysis.to_real(paths, inflation)
+    assert out.shape == paths.shape
+    np.testing.assert_allclose(out[0, :, 0], 100.0 * d)
+
+
+def test_contributions_by_asset_zero_inflation_matches_nominal(cfg):
+    default = analysis.contributions_by_asset(cfg)
+    explicit = analysis.contributions_by_asset(cfg, annual_inflation=0.0)
+    np.testing.assert_allclose(default, explicit)
+
+
+def test_contributed_path_with_inflation_below_nominal(cfg):
+    nominal = analysis.contributed_path(cfg)
+    real = analysis.contributed_path(cfg, annual_inflation=0.02)
+
+    assert real[0] == pytest.approx(150.0)
+    assert nominal[0] == pytest.approx(150.0)
+    assert 150.0 < real[-1] < nominal[-1]
+
+
+def test_sensitivity_to_inflation_lowers_median_and_raises_p_loss(cfg):
+    r = pd.DataFrame({"A": np.full(12, 0.01), "B": np.full(12, 0.01)})
+    total = analysis.run_simulation(cfg, r).sum(axis=2)
+
+    out = analysis.sensitivity_to_inflation(cfg, total, rates=(0.0, 0.02))
+
+    assert list(out.index) == ["Nominal", "2%/yr"]
+    assert out.loc["2%/yr", "P50"] < out.loc["Nominal", "P50"]
+    assert out.loc["2%/yr", "P(loss)"] >= out.loc["Nominal", "P(loss)"]
+
+
 def _prices(series: dict[str, pd.Series]) -> pd.DataFrame:
     """Raw-prices frame with (ticker, "Close") columns, as yfinance returns it."""
     return pd.concat({t: pd.DataFrame({"Close": s}) for t, s in series.items()}, axis=1)

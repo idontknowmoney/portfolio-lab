@@ -242,6 +242,58 @@ def sensitivity_to_haircut(
     return pd.DataFrame(rows).T
 
 
+def deflator(n_months: int, annual_inflation: float) -> np.ndarray:
+    """Factor that turns month-t euros into today's euros, shape (n_months + 1,)."""
+    return (1 + annual_inflation) ** (-np.arange(n_months + 1) / 12)
+
+
+def to_real(values: np.ndarray, annual_inflation: float) -> np.ndarray:
+    """
+    Convert simulated values to today's money by applying the deflator along the month axis.
+
+    Parameters:
+    values (np.ndarray): A contribution path (n_months + 1,), totals (n_paths, n_months + 1)
+    or per-asset paths (n_paths, n_months + 1, n_assets). The month axis is axis 0 for 1-D
+    input, axis 1 otherwise.
+    annual_inflation (float): Assumed constant annual inflation rate.
+
+    Returns:
+    np.ndarray: Same shape as `values`, in today's money.
+    """
+    axis = 0 if values.ndim == 1 else 1
+    d = deflator(values.shape[axis] - 1, annual_inflation)
+    shape = [1] * values.ndim
+    shape[axis] = -1
+    return values * d.reshape(shape)
+
+
+def sensitivity_to_inflation(
+    cfg: Config, total: np.ndarray, rates: tuple[float, ...] = (0.0, 0.02, 0.03, 0.04)
+) -> pd.DataFrame:
+    """
+    Final-value distribution in today's money under several assumed inflation rates.
+
+    Unlike `sensitivity_to_haircut`, this takes already-simulated totals: deflating is a
+    multiplication, so one set of nominal paths serves every rate. The 0% row is the
+    nominal result.
+
+    Parameters:
+    cfg (Config): The portfolio and simulation configuration.
+    total (np.ndarray): Simulated total values, shape (n_paths, n_months + 1).
+    rates (tuple[float, ...]): Annual inflation rates to apply; 0.0 is the nominal baseline.
+
+    Returns:
+    pd.DataFrame: One row per rate with the P5/P50/P95 final value (today's money) and
+    P(loss), the share of paths ending below the present value of the total contributed.
+    """
+    rows = {}
+    for r in rates:
+        contributed = contributed_path(cfg, annual_inflation=r)
+        summary = final_value_summary(to_real(total, r), contributed)
+        rows[f"{r:.0%}/yr" if r else "Nominal"] = summary[["P5", "P50", "P95", "P(loss)"]]
+    return pd.DataFrame(rows).T
+
+
 def annualised_stats(returns: pd.DataFrame) -> pd.DataFrame:
     """
     Annualised mean and volatility of monthly returns, per asset.
@@ -282,7 +334,9 @@ def run_simulation(cfg: Config, returns: pd.DataFrame) -> np.ndarray:
 
 
 def contributions_by_asset(
-    cfg: Config, start: Literal["initial_value", "cost_basis"] = "initial_value"
+    cfg: Config,
+    start: Literal["initial_value", "cost_basis"] = "initial_value",
+    annual_inflation: float = 0.0,
 ) -> np.ndarray:
     """
     Cumulative amount put into each asset per month: starting amount plus its share of the
@@ -292,6 +346,9 @@ def contributions_by_asset(
     cfg (Config): The portfolio and simulation configuration.
     start (str): Starting amount per asset. "initial_value" is what the asset is worth today,
     "cost_basis" is what was actually paid for it.
+    annual_inflation (float): If non-zero, each contribution is discounted to today's money by
+    the deflator at the month it is paid, so the result is the present value of the payments
+    rather than their nominal sum. `start` is never discounted: it is already today's money.
 
     Returns:
     np.ndarray: Shape (n_months + 1, n_assets).
@@ -300,12 +357,16 @@ def contributions_by_asset(
     n_months = cfg.simulation.horizon_years * 12
     starts = np.array([getattr(a, start) for a in assets])
     weights = np.array([a.contribution_weight for a in assets])
-    months = np.arange(n_months + 1)[:, None]
-    return starts + cfg.simulation.monthly_contribution * weights * months
+    d = deflator(n_months, annual_inflation)
+    # payments happen at months 0..n_months-1; "paid" at index t discounts those before t
+    paid = np.concatenate([[0.0], np.cumsum(d[:-1])])[:, None]
+    return starts + cfg.simulation.monthly_contribution * weights * paid
 
 
 def contributed_path(
-    cfg: Config, start: Literal["initial_value", "cost_basis"] = "initial_value"
+    cfg: Config,
+    start: Literal["initial_value", "cost_basis"] = "initial_value",
+    annual_inflation: float = 0.0,
 ) -> np.ndarray:
     """
     Cumulative amount contributed to the whole portfolio per month (see `contributions_by_asset`).
@@ -313,7 +374,7 @@ def contributed_path(
     Returns:
     np.ndarray: Shape (n_months + 1,).
     """
-    return contributions_by_asset(cfg, start).sum(axis=1)
+    return contributions_by_asset(cfg, start, annual_inflation).sum(axis=1)
 
 
 def final_value_summary(
@@ -418,20 +479,27 @@ def plot_fan_chart(
     currency: str,
     log_scale: bool = False,
     cost: np.ndarray | None = None,
+    real: bool = False,
 ) -> Figure:
     """
     Percentile bands of simulated portfolio value over time, with contributions overlaid.
 
     The log scale keeps the upper paths from flattening everything else over long horizons.
-    If `cost` is given, the cost basis + contributions line is drawn too.
+    If `cost` is given, the cost basis + contributions line is drawn too. Set `real=True` if
+    `total`/`contributed`/`cost` are already in today's money (see `to_real`), to label the
+    chart accordingly.
     """
     fig, ax = plt.subplots(figsize=(9, 5))
     years = _plot_bands(ax, total)
     ax.plot(years, contributed, "k--", label="Starting value + contributions")
     if cost is not None:
         ax.plot(years, cost, "k:", label="Cost basis + contributions")
-    ax.set_ylabel(f"Portfolio value ({currency})")
-    ax.set_title("Simulated portfolio value" + (" (log scale)" if log_scale else ""))
+    ylabel = (
+        f"Portfolio value ({currency}, today's money)" if real else f"Portfolio value ({currency})"
+    )
+    title = "Simulated portfolio value in today's money" if real else "Simulated portfolio value"
+    ax.set_ylabel(ylabel)
+    ax.set_title(title + (" (log scale)" if log_scale else ""))
     if log_scale:
         ax.set_yscale("log")
     ax.legend()
