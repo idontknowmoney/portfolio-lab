@@ -62,6 +62,7 @@ class SimulationConfig(_Model):
     seed: int
     rebalance: str
     use_proxies: bool = True
+    inflation_annual: float = Field(gt=-1, default=0.02)
 
 
 class Config(_Model):

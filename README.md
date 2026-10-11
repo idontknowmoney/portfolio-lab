@@ -22,6 +22,8 @@ stays on your machine.
   and gain per asset against its cost basis.
 - Stress-tests the result: compares ETF-only against extended history, and re-runs with an annual
   return haircut (e.g. -2%/yr, -4%/yr).
+- Restates the final-value distribution in today's money, deflating both the value paths and the
+  contributions at an assumed constant `inflation_annual`, with a sensitivity table across rates.
 - Demonstrates sequence risk: replays a horizon-long stretch of historical returns (the one containing
   the worst 12-month block) reversed and with that block first or last. The returns are identical
   but, with monthly contributions, the final values are not (a late crash hurts far more than an early one).
@@ -93,6 +95,7 @@ block_size = 12               # months per bootstrap block
 seed = 42
 rebalance = "none"
 use_proxies = true            # false: use each ETF's own history only
+inflation_annual = 0.02       # assumed constant rate, for the today's-money figures
 ```
 
 Run the simulation by opening the notebook (in VS Code, or `uv run jupyter lab` if you add Jupyter):
@@ -141,7 +144,8 @@ ETF-only against extended history (`history_comparison`).
   costs, different currency effects. Tracking differences are reported, not corrected.
 - The past is a sample, not a forecast. Use `sensitivity_to_haircut` to see how the results move
   with lower returns.
-- No inflation (results are nominal), taxes, fees or rebalancing.
+- Inflation is a single constant assumed rate (`inflation_annual`), not a stochastic or historical
+  series. No taxes, fees or rebalancing.
 - The latest month in the data may be incomplete if prices were downloaded mid-month.
 - The bootstrap only reuses months that happened. It cannot produce a crash worse than anything in
   the window.
