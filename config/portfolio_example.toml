@@ -3,15 +3,14 @@ name = "Example: 70/20/10 global index"
 currency = "EUR"
 
 [[portfolio.assets]]
-name = "MSCI World"
-isin = "IE00B4L5Y983"
-ticker = "EUNL.DE"
+name = "S&P 500"
+isin = "IE00B5BMR087"
+ticker = "SXR8.DE"
 contribution_weight = 0.70
 initial_value = 0
 cost_basis = 0
 proxy = [
-  { ticker = "SPY", currency = "USD", weight = 0.7 },
-  { ticker = "EFA", currency = "USD", weight = 0.3 },
+  { ticker = "SPY", currency = "USD", weight = 1.0 },
 ]
 
 [[portfolio.assets]]
