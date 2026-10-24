@@ -1,7 +1,7 @@
 name: Release
 
-# Merging a PR from release/epNN into main tags the merge commit as epNN and publishes a
-# GitHub release for it, so each blog post can link to the exact code it was written with.
+# Merging a PR from release/epNN into main tags the merge commit as epNN, so each blog post
+# can link to the exact code it was written with.
 # While the PR is open, the same job checks the branch name and that the tag is still free.
 
 on:
@@ -41,13 +41,11 @@ jobs:
                   echo "Will tag the merge into main as $tag"
                   echo "name=$tag" >> "$GITHUB_OUTPUT"
 
-            - name: Tag the merge commit and publish a release
+            - name: Tag the merge commit
               if: github.event.action == 'closed'
               env:
                   TAG: ${{ steps.tag.outputs.name }}
                   SHA: ${{ github.event.pull_request.merge_commit_sha }}
-                  TITLE: ${{ github.event.pull_request.title }}
               run: |
-                  gh release create "$TAG" --repo "$REPO" --target "$SHA" \
-                      --title "$TAG: $TITLE" --generate-notes
-                  echo "Created tag and release $TAG at $SHA"
+                  gh api "repos/$REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$SHA" --silent
+                  echo "Created tag $TAG at $SHA"
