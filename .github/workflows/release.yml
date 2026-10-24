@@ -1,0 +1,53 @@
+name: Release
+
+# Merging a PR from release/epNN into main tags the merge commit as epNN and publishes a
+# GitHub release for it, so each blog post can link to the exact code it was written with.
+# While the PR is open, the same job checks the branch name and that the tag is still free.
+
+on:
+    pull_request:
+        types: [opened, reopened, synchronize, closed]
+        branches: [main]
+
+permissions:
+    contents: write
+
+concurrency:
+    group: release-${{ github.event.pull_request.number }}
+
+jobs:
+    release:
+        if: >-
+            startsWith(github.head_ref, 'release/') &&
+            (github.event.action != 'closed' || github.event.pull_request.merged)
+        runs-on: ubuntu-latest
+        env:
+            GH_TOKEN: ${{ github.token }}
+            REPO: ${{ github.repository }}
+            HEAD_REF: ${{ github.head_ref }}
+        steps:
+            - name: Work out the tag from the branch name
+              id: tag
+              run: |
+                  tag="${HEAD_REF#release/}"
+                  if ! [[ "$tag" =~ ^ep[0-9]{2,}$ ]]; then
+                      echo "::error::Release branches must be named release/epNN, e.g. release/ep01 (got '$HEAD_REF')"
+                      exit 1
+                  fi
+                  if gh api "repos/$REPO/git/ref/tags/$tag" --silent 2>/dev/null; then
+                      echo "::error::Tag $tag already exists. Use the next episode number or delete the old tag first."
+                      exit 1
+                  fi
+                  echo "Will tag the merge into main as $tag"
+                  echo "name=$tag" >> "$GITHUB_OUTPUT"
+
+            - name: Tag the merge commit and publish a release
+              if: github.event.action == 'closed'
+              env:
+                  TAG: ${{ steps.tag.outputs.name }}
+                  SHA: ${{ github.event.pull_request.merge_commit_sha }}
+                  TITLE: ${{ github.event.pull_request.title }}
+              run: |
+                  gh release create "$TAG" --repo "$REPO" --target "$SHA" \
+                      --title "$TAG: $TITLE" --generate-notes
+                  echo "Created tag and release $TAG at $SHA"

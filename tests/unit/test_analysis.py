@@ -294,3 +294,79 @@ def test_sequence_risk_scenarios_respect_n_months():
     r = pd.Series(0.01, index=pd.date_range("2000-01-31", periods=100, freq="ME"))
     paths = analysis.sequence_risk_scenarios(r, 0.0, 10.0, window=12, n_months=36)
     assert all(len(p) == 37 for p in paths.values())
+
+
+def test_portfolio_return_series_empty_portfolio_uses_contribution_weights(cfg):
+    empty = cfg.model_copy(
+        update={
+            "portfolio": cfg.portfolio.model_copy(
+                update={
+                    "assets": [
+                        a.model_copy(update={"initial_value": 0.0}) for a in cfg.portfolio.assets
+                    ]
+                }
+            )
+        }
+    )
+    returns = pd.DataFrame({"A": [0.10, 0.0], "B": [0.0, 0.10]})
+    np.testing.assert_allclose(analysis.portfolio_return_series(empty, returns), [0.10, 0.0])
+
+
+def test_drawdown_measures_fall_from_running_peak():
+    dd = analysis.drawdown(pd.Series([0.10, -0.50, 0.20, 1.0]))
+    np.testing.assert_allclose(dd, [0.0, -0.5, -0.4, 0.0])
+
+
+def test_drawdown_counts_start_as_a_peak():
+    assert analysis.drawdown(pd.Series([-0.10]))[0] == pytest.approx(-0.10)
+
+
+def test_longest_time_below_peak():
+    returns = pd.Series([0.1, -0.1, 0.0, 0.2, -0.1, 0.0])
+    # below the peak in months 2-3 (recovers in 4), then 5-6 still below at the end
+    assert analysis.longest_time_below_peak(returns) == 2
+
+
+def test_window_stats_constant_returns():
+    stats = analysis.window_stats(pd.Series([0.01] * 24))
+    assert stats["Months"] == 24
+    assert stats["Annualised return"] == pytest.approx(1.01**12 - 1)
+    assert stats["Worst 12 months"] == pytest.approx(1.01**12 - 1)
+    assert stats["Max drawdown"] == 0
+    assert stats["Longest time below a peak"] == 0
+
+
+def test_history_window_stats_window_is_measured_on_its_own():
+    idx = pd.date_range("2000-01-31", periods=6, freq="ME")
+    returns = pd.Series([-0.5, 0.0, 0.1, 0.1, 0.1, 0.1], index=idx)
+    out = analysis.history_window_stats(returns, idx[2], idx[-1], label="Late")
+    assert out.loc["Months", "Late"] == 4
+    assert out.loc["Max drawdown", "Late"] == 0
+    assert out.loc["Max drawdown", "Full history"] == pytest.approx(-0.5)
+
+
+def test_fan_chart_skips_cost_line_when_equal_to_contributions():
+    total = np.tile(np.arange(13.0), (5, 1))
+    contributed = np.arange(13.0)
+    same = analysis.plot_fan_chart(total, contributed, "EUR", cost=contributed.copy())
+    different = analysis.plot_fan_chart(total, contributed, "EUR", cost=contributed + 1)
+    labels = lambda fig: [t.get_text() for t in fig.axes[0].get_legend().get_texts()]  # noqa: E731
+    assert "Cost basis + contributions" not in labels(same)
+    assert "Cost basis + contributions" in labels(different)
+
+
+def test_weights_with_empty_start_skip_empty_months(recwarn):
+    paths = np.zeros((3, 4, 2))
+    paths[:, 1:, 0], paths[:, 1:, 1] = 7.0, 3.0
+    summary = analysis.weights_summary(paths, ["A", "B"])
+    np.testing.assert_allclose(summary["Start"], [0.7, 0.3])
+    analysis.plot_weights_over_time(paths, ["A", "B"])
+    assert not [w for w in recwarn if issubclass(w.category, RuntimeWarning)]
+
+
+def test_sensitivity_to_block_size_rows(cfg):
+    out = analysis.sensitivity_to_block_size(
+        cfg, pd.DataFrame({"A": [0.01] * 24, "B": [0.0] * 24}), (1, 3)
+    )
+    assert list(out.index) == ["1 month", "3 months (config)"]
+    assert out["P(loss)"].between(0, 1).all()
