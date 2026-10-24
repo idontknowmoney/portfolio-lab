@@ -204,6 +204,116 @@ def history_comparison(cfg: Config, prices: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).T
 
 
+def drawdown(returns: pd.Series) -> pd.Series:
+    """
+    How far below its highest value so far the portfolio is at the end of each month, for the
+    value implied by compounding `returns` (0 at a new high, -0.3 means 30% below the peak).
+    The starting value counts as the first peak.
+    """
+    growth = (1 + returns).cumprod()
+    return growth / growth.cummax().clip(lower=1.0) - 1
+
+
+def longest_time_below_peak(returns: pd.Series) -> int:
+    """
+    Longest run of consecutive months spent below a previous peak (see `drawdown`). A run still
+    open at the end of the series counts up to its last month.
+    """
+    longest = run = 0
+    for below in drawdown(returns).to_numpy() < 0:
+        run = run + 1 if below else 0
+        longest = max(longest, run)
+    return longest
+
+
+def window_stats(returns: pd.Series) -> pd.Series:
+    """
+    Summary of a stretch of monthly portfolio returns.
+
+    Parameters:
+    returns (pd.Series): Monthly returns, in historical order.
+
+    Returns:
+    pd.Series: "Months", "Annualised return" (compound), "Worst 12 months" (lowest compounded
+    return over any 12 consecutive months), "Max drawdown" (see `drawdown`) and "Longest time
+    below a peak" in months.
+    """
+    n = len(returns)
+    worst_12m = ((1 + returns).rolling(12).apply(np.prod, raw=True) - 1).min()
+    return pd.Series(
+        {
+            "Months": n,
+            "Annualised return": float((1 + returns).prod()) ** (12 / n) - 1,
+            "Worst 12 months": worst_12m,
+            "Max drawdown": drawdown(returns).min(),
+            "Longest time below a peak": longest_time_below_peak(returns),
+        }
+    )
+
+
+def history_window_stats(
+    returns: pd.Series, start: pd.Timestamp, end: pd.Timestamp, label: str = "Window"
+) -> pd.DataFrame:
+    """
+    `window_stats` for the months between `start` and `end` (inclusive) next to the whole series.
+    The window is measured on its own: its drawdowns start from its own first month.
+
+    Returns:
+    pd.DataFrame: One row per statistic, columns `label` and "Full history".
+    """
+    return pd.DataFrame(
+        {label: window_stats(returns.loc[start:end]), "Full history": window_stats(returns)}
+    )
+
+
+def plot_history_window(
+    returns: pd.Series,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    currency: str,
+    label: str = "Window",
+) -> Figure:
+    """
+    Growth of 100 invested and the fall from the running peak over the whole series, with the
+    months between `start` and `end` shaded and the deepest fall labelled.
+
+    Parameters:
+    returns (pd.Series): Monthly portfolio returns, e.g. from `portfolio_return_series`.
+    start (pd.Timestamp): First month of the shaded window.
+    end (pd.Timestamp): Last month of the shaded window.
+    currency (str): Currency label for the growth axis.
+    label (str): Legend label of the shaded window.
+    """
+    growth = 100 * (1 + returns).cumprod()
+    dd = drawdown(returns)
+    # Shade from the end of the month before the window, where its first month starts.
+    i = returns.index.get_loc(start)
+    span_start = returns.index[i - 1] if i > 0 else start
+
+    fig, (top, bottom) = plt.subplots(
+        2, 1, figsize=(9, 6), sharex=True, gridspec_kw={"height_ratios": [2, 1]}
+    )
+    for ax in (top, bottom):
+        ax.axvspan(span_start, end, color="C1", alpha=0.15, label=label if ax is top else None)
+    top.plot(growth.index, growth, color="C0", label="Portfolio")
+    top.set_ylabel(f"Value of 100 {currency} invested")
+    top.set_title("Growth of the portfolio and its falls from the peak")
+    top.legend(loc="upper left")
+    bottom.fill_between(dd.index, dd, 0, color="C3", alpha=0.6, linewidth=0)
+    bottom.set_ylabel("Fall from peak")
+    bottom.yaxis.set_major_formatter(lambda v, _: f"{v:.0%}")
+    bottom.annotate(
+        f"{dd.min():.0%} ({dd.idxmin():%b %Y})",
+        xy=(dd.idxmin(), dd.min()),
+        xytext=(8, 0),
+        textcoords="offset points",
+        va="center",
+        fontsize=9,
+    )
+    bottom.set_xlim(growth.index[0], growth.index[-1])
+    return fig
+
+
 def haircut_returns(returns: pd.DataFrame, annual_haircut: float) -> pd.DataFrame:
     """
     Subtract a flat annual haircut (spread evenly over 12 months) from every monthly return.
@@ -239,6 +349,34 @@ def sensitivity_to_haircut(
         total = run_simulation(cfg, haircut_returns(returns, h)).sum(axis=2)
         summary = final_value_summary(total, contributed)
         rows[f"-{h:.0%}/yr" if h else "Baseline"] = summary[["P5", "P50", "P95", "P(loss)"]]
+    return pd.DataFrame(rows).T
+
+
+def sensitivity_to_block_size(
+    cfg: Config, returns: pd.DataFrame, block_sizes: tuple[int, ...] = (1, 3, 6, 12, 24)
+) -> pd.DataFrame:
+    """
+    Re-run the simulation with different bootstrap block sizes. Longer blocks keep more of the
+    history's streaks (e.g. a crash spread over many months) but give fewer distinct futures.
+
+    Parameters:
+    cfg (Config): The portfolio and simulation configuration.
+    returns (pd.DataFrame): Historical monthly returns with columns in the config's asset order.
+    block_sizes (tuple[int, ...]): Block sizes in months to compare.
+
+    Returns:
+    pd.DataFrame: One row per block size with the P5/P50/P95 final value and P(loss), the share
+    of paths ending below the total contributed.
+    """
+    contributed = contributed_path(cfg)
+    rows = {}
+    for b in block_sizes:
+        sim = cfg.simulation.model_copy(update={"block_size": b})
+        total = run_simulation(cfg.model_copy(update={"simulation": sim}), returns).sum(axis=2)
+        label = f"{b} month" + ("s" if b != 1 else "")
+        if b == cfg.simulation.block_size:
+            label += " (config)"
+        rows[label] = final_value_summary(total, contributed)[["P5", "P50", "P95", "P(loss)"]]
     return pd.DataFrame(rows).T
 
 
@@ -473,6 +611,11 @@ def _plot_bands(ax: Axes, total: np.ndarray) -> np.ndarray:
     return years
 
 
+def _show_cost(cost: np.ndarray | None, contributed: np.ndarray) -> bool:
+    """Whether a cost-basis line adds anything: it is given and differs from `contributed`."""
+    return cost is not None and not np.allclose(cost, contributed)
+
+
 def plot_fan_chart(
     total: np.ndarray,
     contributed: np.ndarray,
@@ -485,14 +628,15 @@ def plot_fan_chart(
     Percentile bands of simulated portfolio value over time, with contributions overlaid.
 
     The log scale keeps the upper paths from flattening everything else over long horizons.
-    If `cost` is given, the cost basis + contributions line is drawn too. Set `real=True` if
+    If `cost` is given and differs from `contributed`, the cost basis + contributions line is
+    drawn too. Set `real=True` if
     `total`/`contributed`/`cost` are already in today's money (see `to_real`), to label the
     chart accordingly.
     """
     fig, ax = plt.subplots(figsize=(9, 5))
     years = _plot_bands(ax, total)
     ax.plot(years, contributed, "k--", label="Starting value + contributions")
-    if cost is not None:
+    if _show_cost(cost, contributed):
         ax.plot(years, cost, "k:", label="Cost basis + contributions")
     ylabel = (
         f"Portfolio value ({currency}, today's money)" if real else f"Portfolio value ({currency})"
@@ -517,6 +661,18 @@ def plot_gain_fan_chart(total: np.ndarray, cost: np.ndarray, currency: str) -> F
     return fig
 
 
+def _weights(paths: np.ndarray) -> tuple[np.ndarray, int]:
+    """
+    Each asset's share of the portfolio value, NaN while the portfolio is empty, and the first
+    month in which every path holds something.
+    """
+    totals = paths.sum(axis=2, keepdims=True)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        weights = np.where(totals > 0, paths / totals, np.nan)
+    first = int(np.argmax((totals[..., 0] > 0).all(axis=0)))
+    return weights, first
+
+
 def weights_summary(paths: np.ndarray, names: list[str]) -> pd.DataFrame:
     """
     Each asset's share of the portfolio value at the start and the P5/P50/P95 at the end.
@@ -526,11 +682,12 @@ def weights_summary(paths: np.ndarray, names: list[str]) -> pd.DataFrame:
     names (list[str]): Asset names, in the same order as the last axis of `paths`.
 
     Returns:
-    pd.DataFrame: One row per asset, columns "Start", "P5", "P50", "P95" (shares, 0-1).
+    pd.DataFrame: One row per asset, columns "Start", "P5", "P50", "P95" (shares, 0-1). If the
+    portfolio starts empty, "Start" is the first month in which it holds anything.
     """
-    weights = paths / paths.sum(axis=2, keepdims=True)
+    weights, first = _weights(paths)
     p5, p50, p95 = np.percentile(weights[:, -1], [5, 50, 95], axis=0)
-    return pd.DataFrame({"Start": weights[0, 0], "P5": p5, "P50": p50, "P95": p95}, index=names)
+    return pd.DataFrame({"Start": weights[0, first], "P5": p5, "P50": p50, "P95": p95}, index=names)
 
 
 def plot_weights_over_time(paths: np.ndarray, names: list[str]) -> Figure:
@@ -541,9 +698,9 @@ def plot_weights_over_time(paths: np.ndarray, names: list[str]) -> Figure:
     paths (np.ndarray): Simulated asset values, shape (n_paths, n_months + 1, n_assets).
     names (list[str]): Asset names, in the same order as the last axis of `paths`.
     """
-    weights = paths / paths.sum(axis=2, keepdims=True)
-    p5, p50, p95 = np.percentile(weights, [5, 50, 95], axis=0)
-    years = np.arange(weights.shape[1]) / 12
+    weights, first = _weights(paths)
+    p5, p50, p95 = np.percentile(weights[:, first:], [5, 50, 95], axis=0)
+    years = np.arange(first, weights.shape[1]) / 12
     fig, ax = plt.subplots(figsize=(9, 5))
     for i, name in enumerate(names):
         (line,) = ax.plot(years, p50[:, i], label=name)
@@ -561,11 +718,14 @@ def plot_weights_over_time(paths: np.ndarray, names: list[str]) -> Figure:
 def plot_final_histogram(
     total: np.ndarray, contributed: np.ndarray, currency: str, cost: np.ndarray | None = None
 ) -> Figure:
-    """Histogram of final portfolio values, with total contributed (and cost, if given) marked."""
+    """
+    Histogram of final portfolio values, with total contributed (and cost, if given and
+    different) marked.
+    """
     fig, ax = plt.subplots(figsize=(9, 4))
     ax.hist(total[:, -1], bins=60)
     ax.axvline(contributed[-1], color="k", linestyle="--", label="Starting value + contributions")
-    if cost is not None:
+    if _show_cost(cost, contributed):
         ax.axvline(cost[-1], color="k", linestyle=":", label="Cost basis + contributions")
     ax.set_xlabel(f"Final value ({currency})")
     ax.set_ylabel("Paths")
@@ -576,7 +736,8 @@ def plot_final_histogram(
 def portfolio_return_series(cfg: Config, returns: pd.DataFrame) -> pd.Series:
     """
     Single monthly return series for the whole portfolio, weighting each asset by its share of
-    the starting value (constant weights, i.e. rebalanced monthly).
+    the starting value, or by its contribution weight when the portfolio starts empty (constant
+    weights, i.e. rebalanced monthly).
 
     Parameters:
     cfg (Config): The portfolio and simulation configuration.
@@ -587,7 +748,10 @@ def portfolio_return_series(cfg: Config, returns: pd.DataFrame) -> pd.Series:
     """
     assets = cfg.portfolio.assets
     values = np.array([a.initial_value for a in assets])
-    weights = values / values.sum() if values.sum() else np.full(len(assets), 1 / len(assets))
+    if values.sum():
+        weights = values / values.sum()
+    else:
+        weights = np.array([a.contribution_weight for a in assets])
     return pd.Series(
         returns[[a.ticker for a in assets]].to_numpy() @ weights, index=returns.index, name="return"
     )
